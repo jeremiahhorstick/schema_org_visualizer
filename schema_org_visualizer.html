@@ -1,0 +1,754 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schema.org Visualizer</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #1a73e8;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        
+        #search {
+            padding: 8px;
+            width: 300px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        #view-selector {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .view-btn {
+            padding: 8px 16px;
+            background-color: #f1f3f4;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .view-btn.active {
+            background-color: #1a73e8;
+            color: white;
+        }
+        
+        .view-btn:hover:not(.active) {
+            background-color: #e8f0fe;
+        }
+        
+        #visualization {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .node-info {
+            position: absolute;
+            background: white;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-width: 300px;
+            z-index: 100;
+            display: none;
+        }
+        
+        .node-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .node-description {
+            font-size: 0.9em;
+        }
+        
+        .loader {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+        }
+        
+        .spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #1a73e8;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .tree-view {
+            height: 100%;
+            overflow: auto;
+        }
+        
+        .tree-node {
+            margin-left: 20px;
+        }
+        
+        .tree-node-header {
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            user-select: none;
+        }
+        
+        .tree-node-header:hover {
+            background-color: #f1f3f4;
+        }
+        
+        .tree-node-children {
+            display: none;
+        }
+        
+        .tree-node.expanded > .tree-node-children {
+            display: block;
+        }
+        
+        .expander {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            text-align: center;
+            line-height: 16px;
+            margin-right: 5px;
+        }
+        
+        footer {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 0.9em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>Schema.org Visualizer</h1>
+    
+    <div class="controls">
+        <input type="text" id="search" placeholder="Search for a schema type...">
+        <div id="view-selector">
+            <button class="view-btn active" data-view="graph">Graph View</button>
+            <button class="view-btn" data-view="tree">Tree View</button>
+        </div>
+    </div>
+    
+    <div id="visualization">
+        <div class="loader">
+            <div class="spinner"></div>
+        </div>
+    </div>
+    
+    <div class="node-info">
+        <div class="node-title"></div>
+        <div class="node-description"></div>
+    </div>
+    
+    <footer>
+        Data source: schema.org | Created: May 2025
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const visualization = document.getElementById('visualization');
+            const nodeInfo = document.querySelector('.node-info');
+            const searchInput = document.getElementById('search');
+            const viewButtons = document.querySelectorAll('.view-btn');
+            let schemaData = null;
+            let currentView = 'graph';
+
+            // Fetch schema.org data from GitHub
+            async function fetchSchemaData() {
+                try {
+                    const response = await fetch('https://raw.githubusercontent.com/schemaorg/schemaorg/main/data/releases/28.0/schemaorg-all-http.jsonld');
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch Schema.org data');
+                    }
+                    const rawData = await response.json();
+                    console.log('Fetched Schema.org data from GitHub');
+                    return processSchemaData(rawData);
+                } catch (error) {
+                    console.error('Error fetching Schema.org data:', error);
+                    // Fallback to mock data if fetch fails
+                    return createEnhancedMockData();
+                }
+            }
+
+            function processSchemaData(rawData) {
+                const graph = rawData['@graph'];
+                const types = {};
+                const hierarchy = {};
+                
+                // First pass: collect all types
+                graph.forEach(item => {
+                    if (item['@type'] === 'rdfs:Class') {
+                        const id = item['@id'];
+                        if (id.startsWith('schema:')) {
+                            const name = id.replace('schema:', '');
+                            types[name] = {
+                                name: name,
+                                description: item['rdfs:comment'] || '',
+                                subClassOf: [],
+                                properties: []
+                            };
+                        }
+                    }
+                });
+                
+                // Second pass: build hierarchy
+                graph.forEach(item => {
+                    if (item['@type'] === 'rdfs:Class' && item['rdfs:subClassOf']) {
+                        const id = item['@id'].replace('schema:', '');
+                        if (types[id]) {
+                            const subClassOf = Array.isArray(item['rdfs:subClassOf']) 
+                                ? item['rdfs:subClassOf'] 
+                                : [item['rdfs:subClassOf']];
+                            
+                            subClassOf.forEach(parent => {
+                                const parentName = parent['@id'].replace('schema:', '');
+                                if (types[parentName]) {
+                                    types[id].subClassOf.push(parentName);
+                                    if (!hierarchy[parentName]) {
+                                        hierarchy[parentName] = [];
+                                    }
+                                    hierarchy[parentName].push(id);
+                                }
+                            });
+                        }
+                    }
+                });
+                
+                // Third pass: add properties
+                graph.forEach(item => {
+                    if (item['@type'] === 'rdf:Property') {
+                        const propName = item['@id'].replace('schema:', '');
+                        const domains = Array.isArray(item['schema:domainIncludes']) 
+                            ? item['schema:domainIncludes'] 
+                            : item['schema:domainIncludes'] ? [item['schema:domainIncludes']] : [];
+                        
+                        domains.forEach(domain => {
+                            const domainName = domain['@id'].replace('schema:', '');
+                            if (types[domainName]) {
+                                types[domainName].properties.push({
+                                    name: propName,
+                                    description: item['rdfs:comment'] || ''
+                                });
+                            }
+                        });
+                    }
+                });
+                
+                return { types, hierarchy };
+            }
+
+            function createEnhancedMockData() {
+                // Fallback mock data (minimal version for error handling)
+                const types = {
+                    'Thing': {
+                        name: 'Thing',
+                        description: 'The most generic type of item.',
+                        subClassOf: [],
+                        properties: [
+                            { name: 'name', description: 'The name of the item.' },
+                            { name: 'description', description: 'A description of the item.' }
+                        ]
+                    },
+                    'CreativeWork': {
+                        name: 'CreativeWork',
+                        description: 'The most generic kind of creative work.',
+                        subClassOf: ['Thing'],
+                        properties: [
+                            { name: 'author', description: 'The author of this content.' }
+                        ]
+                    }
+                };
+                
+                const hierarchy = {
+                    'Thing': ['CreativeWork']
+                };
+                
+                return { types, hierarchy };
+            }
+
+            function initializeVisualization() {
+                visualization.innerHTML = '';
+                
+                if (currentView === 'graph') {
+                    renderGraphView();
+                } else {
+                    renderTreeView();
+                }
+            }
+
+            function renderGraphView() {
+                visualization.innerHTML = '';
+                
+                const width = visualization.clientWidth;
+                const height = visualization.clientHeight;
+                
+                const svg = d3.select('#visualization')
+                    .append('svg')
+                    .attr('width', width)
+                    .attr('height', height);
+                
+                const g = svg.append('g');
+                
+                const zoom = d3.zoom()
+                    .scaleExtent([0.1, 4])
+                    .on('zoom', (event) => {
+                        g.attr('transform', event.transform);
+                    });
+                
+                svg.call(zoom);
+                
+                svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(0.5));
+                
+                const nodes = [];
+                const links = [];
+                const nodeMap = {};
+                
+                Object.keys(schemaData.types).forEach(typeName => {
+                    const node = {
+                        id: typeName,
+                        ...schemaData.types[typeName]
+                    };
+                    nodes.push(node);
+                    nodeMap[typeName] = node;
+                });
+                
+                nodes.forEach(node => {
+                    node.subClassOf.forEach(parent => {
+                        links.push({
+                            source: parent,
+                            target: node.id
+                        });
+                    });
+                });
+                
+                const simulation = d3.forceSimulation(nodes)
+                    .force('link', d3.forceLink(links).id(d => d.id).distance(150))
+                    .force('charge', d3.forceManyBody().strength(-200))
+                    .force('center', d3.forceCenter(0, 0))
+                    .force('collision', d3.forceCollide().radius(30));
+                
+                const link = g.append('g')
+                    .selectAll('line')
+                    .data(links)
+                    .enter()
+                    .append('line')
+                    .attr('stroke', '#999')
+                    .attr('stroke-opacity', 0.6)
+                    .attr('stroke-width', 1);
+                
+                const node = g.append('g')
+                    .selectAll('circle')
+                    .data(nodes)
+                    .enter()
+                    .append('circle')
+                    .attr('r', d => Math.min(15 + d.properties.length / 2, 30))
+                    .attr('fill', d => {
+                        const depth = getDepth(d.id);
+                        const colorScale = d3.scaleSequential(d3.interpolateBlues)
+                            .domain([0, 5]);
+                        return colorScale(Math.min(depth, 5));
+                    })
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 1.5)
+                    .call(d3.drag()
+                        .on('start', dragstarted)
+                        .on('drag', dragged)
+                        .on('end', dragended))
+                    .on('mouseover', showNodeInfo)
+                    .on('mouseout', hideNodeInfo)
+                    .on('click', centerNode);
+                
+                const labels = g.append('g')
+                    .selectAll('text')
+                    .data(nodes)
+                    .enter()
+                    .append('text')
+                    .text(d => d.name)
+                    .attr('font-size', '10px')
+                    .attr('dx', 15)
+                    .attr('dy', 4)
+                    .attr('pointer-events', 'none');
+                
+                simulation.on('tick', () => {
+                    link
+                        .attr('x1', d => d.source.x)
+                        .attr('y1', d => d.source.y)
+                        .attr('x2', d => d.target.x)
+                        .attr('y2', d => d.target.y);
+                    
+                    node
+                        .attr('cx', d => d.x)
+                        .attr('cy', d => d.y);
+                    
+                    labels
+                        .attr('x', d => d.x)
+                        .attr('y', d => d.y);
+                });
+                
+                function dragstarted(event, d) {
+                    if (!event.active) simulation.alphaTarget(0.3).restart();
+                    d.fx = d.x;
+                    d.fy = d.y;
+                }
+                
+                function dragged(event, d) {
+                    d.fx = event.x;
+                    d.fy = event.y;
+                }
+                
+                function dragended(event, d) {
+                    if (!event.active) simulation.alphaTarget(0);
+                    d.fx = null;
+                    d.fy = null;
+                }
+                
+                function showNodeInfo(event, d) {
+                    const x = event.pageX;
+                    const y = event.pageY;
+                    
+                    nodeInfo.style.left = `${x + 10}px`;
+                    nodeInfo.style.top = `${y + 10}px`;
+                    nodeInfo.style.display = 'block';
+                    
+                    nodeInfo.querySelector('.node-title').textContent = d.name;
+                    nodeInfo.querySelector('.node-description').textContent = d.description;
+                    
+                    if (d.properties && d.properties.length > 0) {
+                        const propText = `Properties: ${d.properties.length}`;
+                        const propElement = document.createElement('div');
+                        propElement.textContent = propText;
+                        nodeInfo.querySelector('.node-description').appendChild(propElement);
+                    }
+                }
+                
+                function hideNodeInfo() {
+                    nodeInfo.style.display = 'none';
+                }
+                
+                function centerNode(event, d) {
+                    event.stopPropagation();
+                    
+                    const transform = d3.zoomIdentity
+                        .translate(width / 2, height / 2)
+                        .scale(1)
+                        .translate(-d.x, -d.y);
+                    
+                    svg.transition().duration(750).call(zoom.transform, transform);
+                    
+                    node.attr('opacity', n => isConnected(d, n) ? 1 : 0.2);
+                    link.attr('opacity', l => l.source.id === d.id || l.target.id === d.id ? 1 : 0.1);
+                    labels.attr('opacity', n => isConnected(d, n) ? 1 : 0.2);
+                    
+                    setTimeout(() => {
+                        node.attr('opacity', 1);
+                        link.attr('opacity', 0.6);
+                        labels.attr('opacity', 1);
+                    }, 3000);
+                }
+                
+                function isConnected(a, b) {
+                    if (a.id === b.id) return true;
+                    return a.subClassOf.includes(b.id) || b.subClassOf.includes(a.id);
+                }
+                
+                function getDepth(typeName) {
+                    let depth = 0;
+                    let current = schemaData.types[typeName];
+                    
+                    while (current && current.subClassOf && current.subClassOf.length > 0) {
+                        depth++;
+                        current = schemaData.types[current.subClassOf[0]];
+                    }
+                    
+                    return depth;
+                }
+                
+                searchInput.addEventListener('input', () => {
+                    const query = searchInput.value.toLowerCase();
+                    
+                    if (!query) {
+                        node.attr('opacity', 1);
+                        link.attr('opacity', 0.6);
+                        labels.attr('opacity', 1);
+                        return;
+                    }
+                    
+                    node.attr('opacity', d => d.name.toLowerCase().includes(query) ? 1 : 0.1);
+                    labels.attr('opacity', d => d.name.toLowerCase().includes(query) ? 1 : 0.1);
+                    
+                    link.attr('opacity', l => {
+                        const sourceMatch = l.source.name.toLowerCase().includes(query);
+                        const targetMatch = l.target.name.toLowerCase().includes(query);
+                        return sourceMatch || targetMatch ? 0.8 : 0.1;
+                    });
+                    
+                    const matchingNode = nodes.find(d => d.name.toLowerCase().includes(query));
+                    if (matchingNode) {
+                        const transform = d3.zoomIdentity
+                            .translate(width / 2, height / 2)
+                            .scale(1)
+                            .translate(-matchingNode.x, -matchingNode.y);
+                        
+                        svg.transition().duration(500).call(zoom.transform, transform);
+                    }
+                });
+            }
+
+            function renderTreeView() {
+                visualization.innerHTML = '<div class="tree-view"></div>';
+                const treeView = document.querySelector('.tree-view');
+                
+                const root = 'Thing';
+                const rootNode = createTreeNode(root);
+                treeView.appendChild(rootNode);
+                expandNode(rootNode, root);
+                
+                searchInput.addEventListener('input', () => {
+                    const query = searchInput.value.toLowerCase();
+                    
+                    if (!query) {
+                        const allNodes = document.querySelectorAll('.tree-node-header');
+                        allNodes.forEach(node => {
+                            node.style.backgroundColor = '';
+                        });
+                        return;
+                    }
+                    
+                    const allNodes = document.querySelectorAll('.tree-node-header');
+                    allNodes.forEach(node => {
+                        const typeName = node.querySelector('.node-name').textContent;
+                        if (typeName.toLowerCase().includes(query)) {
+                            node.style.backgroundColor = '#e8f0fe';
+                            
+                            let parent = node.parentElement;
+                            while (parent && parent.classList.contains('tree-node')) {
+                                parent.classList.add('expanded');
+                                parent = parent.parentElement.parentElement;
+                            }
+                        } else {
+                            node.style.backgroundColor = '';
+                        }
+                    });
+                    
+                    const firstMatch = document.querySelector(`.tree-node-header[style*="background-color"]`);
+                    if (firstMatch) {
+                        firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                });
+            }
+
+            function createTreeNode(typeName) {
+                const type = schemaData.types[typeName];
+                if (!type) return null;
+                
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'tree-node';
+                nodeDiv.dataset.type = typeName;
+                
+                const header = document.createElement('div');
+                header.className = 'tree-node-header';
+                
+                const expander = document.createElement('span');
+                expander.className = 'expander';
+                expander.textContent = '▶';
+                
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'node-name';
+                nameSpan.textContent = typeName;
+                
+                header.appendChild(expander);
+                header.appendChild(nameSpan);
+                
+                const children = document.createElement('div');
+                children.className = 'tree-node-children';
+                
+                nodeDiv.appendChild(header);
+                nodeDiv.appendChild(children);
+                
+                header.addEventListener('click', function() {
+                    const node = this.parentElement;
+                    const isExpanded = node.classList.contains('expanded');
+                    
+                    if (isExpanded) {
+                        node.classList.remove('expanded');
+                        expander.textContent = '▶';
+                    } else {
+                        node.classList.add('expanded');
+                        expander.textContent = '▼';
+                        const children = node.querySelector('.tree-node-children');
+                        if (children.children.length === 0) {
+                            expandNode(node, typeName);
+                        }
+                    }
+                    
+                    showNodeInfoInTreeView(typeName);
+                });
+                
+                return nodeDiv;
+            }
+
+            function expandNode(node, typeName) {
+                const childrenContainer = node.querySelector('.tree-node-children');
+                const expander = node.querySelector('.expander');
+                
+                const children = schemaData.hierarchy[typeName] || [];
+                if (children.length > 0) {
+                    expander.textContent = '▼';
+                    
+                    children.sort();
+                    
+                    children.forEach(childName => {
+                        const childNode = createTreeNode(childName);
+                        if (childNode) {
+                            childrenContainer.appendChild(childNode);
+                        }
+                    });
+                } else {
+                    expander.textContent = '•';
+                }
+            }
+
+            function showNodeInfoInTreeView(typeName) {
+                const type = schemaData.types[typeName];
+                if (!type) return;
+                
+                nodeInfo.style.display = 'block';
+                nodeInfo.style.left = '50%';
+                nodeInfo.style.top = '50%';
+                nodeInfo.style.transform = 'translate(-50%, -50%)';
+                
+                nodeInfo.querySelector('.node-title').textContent = type.name;
+                
+                const description = nodeInfo.querySelector('.node-description');
+                description.innerHTML = '';
+                
+                const descText = document.createElement('p');
+                descText.textContent = type.description;
+                description.appendChild(descText);
+                
+                if (type.subClassOf && type.subClassOf.length > 0) {
+                    const subClassOf = document.createElement('p');
+                    subClassOf.innerHTML = `<strong>Subclass of:</strong> ${type.subClassOf.join(', ')}`;
+                    description.appendChild(subClassOf);
+                }
+                
+                if (type.properties && type.properties.length > 0) {
+                    const props = document.createElement('p');
+                    props.innerHTML = `<strong>Properties (${type.properties.length}):</strong> ${type.properties.slice(0, 5).map(p => p.name).join(', ')}${type.properties.length > 5 ? '...' : ''}`;
+                    description.appendChild(props);
+                }
+                
+                const closeBtn = document.createElement('button');
+                closeBtn.textContent = 'Close';
+                closeBtn.style.marginTop = '10px';
+                closeBtn.style.padding = '5px 10px';
+                closeBtn.addEventListener('click', () => {
+                    nodeInfo.style.display = 'none';
+                });
+                description.appendChild(closeBtn);
+            }
+
+            viewButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const view = this.getAttribute('data-view');
+                    currentView = view;
+                    
+                    viewButtons.forEach(btn => btn.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    nodeInfo.style.display = 'none';
+                    
+                    initializeVisualization();
+                });
+            });
+
+            document.addEventListener('click', function(event) {
+                if (!nodeInfo.contains(event.target) && 
+                    event.target.tagName !== 'circle' && 
+                    !event.target.classList.contains('tree-node-header')) {
+                    nodeInfo.style.display = 'none';
+                }
+            });
+
+            (async function() {
+                schemaData = await fetchSchemaData();
+                initializeVisualization();
+            })();
+        });
+    </script>
+</body>
+</html>
