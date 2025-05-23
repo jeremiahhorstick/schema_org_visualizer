@@ -1,3 +1,5 @@
+https://jeremiahhorstick.github.io/schema_org_visualizer/
+
 The Schema.org Visualizer is a web-based tool designed to explore and visualize the Schema.org vocabulary, a structured data markup system used for enhancing web content. This tool provides two interactive views: a Graph View and a Tree View, enabling users to navigate the hierarchical relationships and properties of Schema.org types.
 
 Features:
